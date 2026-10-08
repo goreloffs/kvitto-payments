@@ -304,6 +304,30 @@ ruff check . --fix    # автофикс
 
 GitHub Actions прогоняет `ruff check .` и `pytest -v` на каждый push в `main`.
 
+## Миграции (Alembic)
+
+Схема БД управляется через Alembic. Локально (SQLite) таблицы создаются автоматически
+через `Base.metadata.create_all` в `lifespan`. В Docker (PostgreSQL) схема создаётся
+через `alembic upgrade head` при старте контейнера `api`.
+
+### Команды
+
+```bash
+# Применить все миграции
+alembic upgrade head
+
+# Откатить последнюю
+alembic downgrade -1
+
+# Сгенерировать новую миграцию по изменениям в моделях
+alembic revision --autogenerate -m "описание изменения"
+
+# История миграций
+alembic history
+
+# Текущая ревизия
+alembic current
+
 ## Заметки
 
 - Тесты используют отдельную in-memory SQLite с `StaticPool`, боевая база не затрагивается.
