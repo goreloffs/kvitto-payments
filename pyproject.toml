@@ -1,0 +1,19 @@
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade
+    "SIM", # flake8-simplify
+]
+ignore = [
+    "B008",  # Depends() в аргументах — это норма для FastAPI
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]  # assert в тестах — ок

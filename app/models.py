@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import StrEnum
 
-from sqlalchemy import ForeignKey, Integer, String, DateTime, JSON, UniqueConstraint
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -54,7 +54,7 @@ class Payment(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
     )
 
     idempotency_key: Mapped[str | None] = mapped_column(

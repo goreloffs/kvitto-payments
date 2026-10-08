@@ -5,7 +5,6 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.config import settings
 
-
 # SQLite требует особый флаг для многопоточности (uvicorn работает в потоках).
 # Для других СУБД connect_args не нужен.
 connect_args = {}

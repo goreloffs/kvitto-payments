@@ -5,7 +5,6 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
 from app.models import PaymentMethod, PaymentStatus
 
-
 # ---------- Tariffs ----------
 
 class TariffOut(BaseModel):

@@ -1,4 +1,3 @@
-import pytest
 
 
 def _create_payment(client) -> int:
