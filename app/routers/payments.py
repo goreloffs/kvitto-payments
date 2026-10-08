@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Header, HTTPException, Response, status, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -14,6 +14,20 @@ from app.services import (
 router = APIRouter(prefix="/payments", tags=["payments"])
 
 
+@router.get("", response_model=list[PaymentOut])
+def list_payments(
+    email: str | None = Query(default=None),
+    payment_status: PaymentStatus | None = Query(default=None, alias="status"),
+    db: Session = Depends(get_db),
+) -> list[Payment]:
+    stmt = select(Payment).order_by(Payment.id)
+    if email is not None:
+        stmt = stmt.where(Payment.email == email)
+    if payment_status is not None:
+        stmt = stmt.where(Payment.status == payment_status.value)
+    return list(db.scalars(stmt).all())
+
+
 @router.post("", response_model=PaymentOut)
 def create_payment(
     payload: PaymentCreate,
@@ -21,7 +35,6 @@ def create_payment(
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     db: Session = Depends(get_db),
 ) -> Payment:
-    # 1. Идемпотентность: если ключ есть и платёж уже создан — вернуть его.
     if idempotency_key is not None:
         existing = db.scalar(
             select(Payment).where(Payment.idempotency_key == idempotency_key)
@@ -30,23 +43,19 @@ def create_payment(
             response.status_code = status.HTTP_200_OK
             return existing
 
-    # 2. Тариф.
     tariff = db.get(Tariff, payload.tariff_id)
     if tariff is None:
         raise HTTPException(status_code=404, detail="tariff_not_found")
 
-    # 3. Промокод (может кинуть InvalidPromoCode → 422).
     try:
         amount, discount = apply_promo_code(tariff.price, payload.promo_code)
     except InvalidPromoCode:
         raise HTTPException(status_code=422, detail="invalid_promo_code") from None
 
-    # 4. Рассрочка.
     schedule: list[int] | None = None
     if payload.method == PaymentMethod.INSTALLMENT:
         schedule = build_schedule(amount, payload.installment_months)
 
-    # 5. Создаём платёж.
     payment = Payment(
         status=PaymentStatus.PENDING.value,
         tariff_id=tariff.id,
@@ -72,17 +81,3 @@ def get_payment(payment_id: int, db: Session = Depends(get_db)) -> Payment:
     if payment is None:
         raise HTTPException(status_code=404, detail="payment_not_found")
     return payment
-
-
-@router.get("", response_model=list[PaymentOut])
-def list_payments(
-    email: str | None = Query(default=None),
-    status: PaymentStatus | None = Query(default=None),
-    db: Session = Depends(get_db),
-) -> list[Payment]:
-    stmt = select(Payment).order_by(Payment.id)
-    if email is not None:
-        stmt = stmt.where(Payment.email == email)
-    if status is not None:
-        stmt = stmt.where(Payment.status == status.value)
-    return list(db.scalars(stmt).all())
