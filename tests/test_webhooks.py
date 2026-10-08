@@ -71,3 +71,64 @@ def test_webhook_refunded_is_terminal(client):
             "/webhooks/bank", json={"payment_id": pid, "status": bad}
         )
         assert resp.status_code == 409, f"expected 409 for {bad}"
+
+
+# ---------- HMAC ----------
+
+import hashlib
+import hmac
+import json
+
+from app.config import settings
+
+
+def _sign(body: bytes, secret: str) -> str:
+    return hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+
+
+def test_webhook_without_secret_is_open(client):
+    # по умолчанию webhook_secret = None → подпись не проверяется
+    pid = _create_payment(client)
+    resp = client.post(
+        "/webhooks/bank", json={"payment_id": pid, "status": "succeeded"}
+    )
+    assert resp.status_code == 200
+
+
+def test_webhook_with_secret_valid_signature(client, monkeypatch):
+    monkeypatch.setattr(settings, "webhook_secret", "topsecret")
+    pid = _create_payment(client)
+    body = json.dumps({"payment_id": pid, "status": "succeeded"}).encode()
+    sig = _sign(body, "topsecret")
+    resp = client.post(
+        "/webhooks/bank",
+        content=body,
+        headers={"X-Signature": sig, "Content-Type": "application/json"},
+    )
+    assert resp.status_code == 200
+
+
+def test_webhook_with_secret_invalid_signature(client, monkeypatch):
+    monkeypatch.setattr(settings, "webhook_secret", "topsecret")
+    pid = _create_payment(client)
+    body = json.dumps({"payment_id": pid, "status": "succeeded"}).encode()
+    resp = client.post(
+        "/webhooks/bank",
+        content=body,
+        headers={"X-Signature": "badbadbad", "Content-Type": "application/json"},
+    )
+    assert resp.status_code == 401
+    # статус не изменился
+    assert client.get(f"/payments/{pid}").json()["status"] == "pending"
+
+
+def test_webhook_with_secret_missing_signature(client, monkeypatch):
+    monkeypatch.setattr(settings, "webhook_secret", "topsecret")
+    pid = _create_payment(client)
+    body = json.dumps({"payment_id": pid, "status": "succeeded"}).encode()
+    resp = client.post(
+        "/webhooks/bank",
+        content=body,
+        headers={"Content-Type": "application/json"},
+    )
+    assert resp.status_code == 401
