@@ -39,7 +39,7 @@ def create_payment(
     try:
         amount, discount = apply_promo_code(tariff.price, payload.promo_code)
     except InvalidPromoCode:
-        raise HTTPException(status_code=422, detail="invalid_promo_code")
+        raise HTTPException(status_code=422, detail="invalid_promo_code") from None
 
     # 4. Рассрочка.
     schedule: list[int] | None = None
