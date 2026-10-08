@@ -12,6 +12,8 @@ RUN pip install --upgrade pip && pip install -r requirements.txt
 
 # Затем код.
 COPY app ./app
+COPY alembic ./alembic
+COPY alembic.ini .
 
 EXPOSE 8000
 
