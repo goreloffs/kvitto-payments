@@ -276,14 +276,18 @@ app/
     tariffs.py
     payments.py
     webhooks.py
+alembic/
+  versions/       # файлы миграций
+  env.py          # конфиг Alembic
 tests/
   conftest.py     # фикстуры: тестовый engine, client, override get_db
   test_tariffs.py
   test_payments.py
   test_webhooks.py
+alembic.ini       # конфиг Alembic
 Dockerfile
 docker-compose.yml
-pyproject.toml    # конфиг ruff
+pyproject.toml    # конфиг ruff + pytest
 ```
 
 ## Конфигурация
@@ -327,6 +331,10 @@ alembic history
 
 # Текущая ревизия
 alembic current
+```
+
+**Важно:** при генерации миграции модели должны быть импортированы в `alembic/env.py`
+(`from app import models`), иначе Alembic не увидит изменения схемы.
 
 ## Заметки
 
