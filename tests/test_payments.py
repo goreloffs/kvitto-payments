@@ -107,3 +107,31 @@ def test_get_missing_payment_returns_404(client):
 def test_create_payment_for_missing_tariff_returns_404(client):
     resp = client.post("/payments", json=_payload(tariff_id=999))
     assert resp.status_code == 404
+
+
+def test_list_payments_no_filters(client):
+    client.post("/payments", json=_payload())
+    client.post("/payments", json=_payload())
+    resp = client.get("/payments")
+    assert resp.status_code == 200
+    assert len(resp.json()) == 2
+
+
+def test_list_payments_by_email(client):
+    client.post("/payments", json=_payload())
+    client.post("/payments", json={**_payload(), "email": "other@example.com"})
+    resp = client.get("/payments", params={"email": "student@example.com"})
+    assert resp.status_code == 200
+    assert len(resp.json()) == 1
+
+
+def test_list_payments_by_status(client):
+    created = client.post("/payments", json=_payload()).json()
+    client.post(
+        "/webhooks/bank",
+        json={"payment_id": created["id"], "status": "succeeded"},
+    )
+    resp = client.get("/payments", params={"status": "succeeded"})
+    assert resp.status_code == 200
+    assert len(resp.json()) == 1
+    assert resp.json()[0]["id"] == created["id"]

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Response, status, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -72,3 +72,17 @@ def get_payment(payment_id: int, db: Session = Depends(get_db)) -> Payment:
     if payment is None:
         raise HTTPException(status_code=404, detail="payment_not_found")
     return payment
+
+
+@router.get("", response_model=list[PaymentOut])
+def list_payments(
+    email: str | None = Query(default=None),
+    status: PaymentStatus | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> list[Payment]:
+    stmt = select(Payment).order_by(Payment.id)
+    if email is not None:
+        stmt = stmt.where(Payment.email == email)
+    if status is not None:
+        stmt = stmt.where(Payment.status == status.value)
+    return list(db.scalars(stmt).all())
