@@ -1,18 +1,20 @@
 # Kvitto Payments API
 
 Небольшой сервис на FastAPI для приёма оплаты курсов онлайн-школой через Квитто.
-Реализует создание платежей, применение промокода, график рассрочки, идемпотентность
-и обработку вебхуков от банка.
+Реализует создание платежей, применение промокода, график рассрочки, идемпотентность,
+обработку вебхуков от банка с HMAC-подписью и запуск через Docker + PostgreSQL.
 
 ## Стек
 
 - Python 3.11+ (проверено на 3.14)
 - FastAPI 0.143, Pydantic v2, pydantic-settings
-- SQLAlchemy 2.1 + SQLite (по умолчанию)
+- SQLAlchemy 2.1 + SQLite (по умолчанию) / PostgreSQL (в Docker)
 - pytest + httpx (через `fastapi.testclient`)
+- ruff — линтер
 - uvicorn
+- Docker + Docker Compose (опционально)
 
-## Установка и запуск
+## Установка и запуск (локально, SQLite)
 
 ```bash
 # 1. Клонировать
@@ -40,15 +42,64 @@ Swagger — `http://127.0.0.1:8000/docs`.
 - создаются таблицы (`Base.metadata.create_all`);
 - засеиваются тарифы: `basic` = 990 000 копеек, `standard` = 1 990 000, `premium` = 2 990 000.
 
+## Запуск через Docker
+
+Требуется Docker и Docker Compose v2+.
+
+```bash
+docker compose up --build -d
+```
+
+Поднимаются два контейнера:
+- `db` — PostgreSQL 16 (alpine), данные в named volume `pgdata`;
+- `api` — FastAPI-приложение на `python:3.12-slim`, слушает `0.0.0.0:8000`.
+
+API стартует **после** того, как Postgres пройдёт healthcheck (`condition: service_healthy`),
+поэтому гонки при инициализации нет. Но uvicorn внутри контейнера поднимается 1–3 секунды —
+после `docker compose up` дождись `Application startup complete` в логах:
+
+```bash
+docker compose logs -f api
+```
+
+Проверка:
+
+```bash
+curl http://127.0.0.1:8000/health
+curl http://127.0.0.1:8000/tariffs
+docker compose exec db psql -U kvitto -d kvitto -c "SELECT code, price FROM tariffs;"
+```
+
+Остановить (данные Postgres сохранятся в volume):
+
+```bash
+docker compose down
+```
+
+Остановить и удалить данные:
+
+```bash
+docker compose down -v
+```
+
+С Docker используется PostgreSQL, без Docker — SQLite (см. `.env.example`).
+
 ## Тесты
 
 ```bash
 pytest -v
 ```
 
-22 теста покрывают: тарифы, создание платежа с промокодом (в т.ч. в нижнем регистре),
-график рассрочки для 3/6/12 месяцев, идемпотентность, разрешённые/запрещённые переходы
-статусов, 404 на несуществующий платёж.
+29 тестов покрывают:
+- тарифы;
+- создание платежа с промокодом и без, в т.ч. промокод в нижнем регистре;
+- график рассрочки для 3/6/12 месяцев;
+- идемпотентность по `Idempotency-Key`;
+- разрешённые и запрещённые переходы статусов;
+- 404 на несуществующий платёж;
+- HMAC-подпись вебхука (валидная, невалидная, отсутствующая).
+
+Тесты используют отдельную in-memory SQLite с `StaticPool` — боевая база не затрагивается.
 
 ## Эндпоинты
 
@@ -74,7 +125,7 @@ curl http://127.0.0.1:8000/tariffs
 `installment_months` (обязательно для `installment`, значения 3/6/12), опционально `promo_code`.
 
 Если передан заголовок `Idempotency-Key` и платёж с таким ключом уже существует —
-возвращается он же со статусом 200 (второй не создаётся). Иначе — 201.
+возвращается он же со статусом **200** (второй не создаётся). Иначе — **201**.
 
 Без промокода:
 
@@ -122,7 +173,7 @@ curl -X POST http://127.0.0.1:8000/payments \
   "installment_months": 3,
   "schedule": [663334, 663333, 663333],
   "email": "student@example.com",
-  "created_at": "2026-10-08T17:33:44.264819"
+  "created_at": "2026-10-08T18:54:46.400919Z"
 }
 ```
 
@@ -134,6 +185,16 @@ curl -X POST http://127.0.0.1:8000/payments \
 curl http://127.0.0.1:8000/payments/1
 ```
 
+### `GET /payments`
+
+Список платежей с опциональными фильтрами `email` и `status`.
+
+```bash
+curl "http://127.0.0.1:8000/payments"
+curl "http://127.0.0.1:8000/payments?email=student@example.com"
+curl "http://127.0.0.1:8000/payments?status=succeeded"
+```
+
 ### `POST /webhooks/bank`
 
 Банк сообщает о смене статуса. Тело: `payment_id`, `status`.
@@ -143,15 +204,43 @@ curl http://127.0.0.1:8000/payments/1
 - `pending → failed`
 - `succeeded → refunded`
 
-Платежа нет — 404.
-Запрещённый переход — 409 `{"error": "invalid_transition"}`, статус не меняется.
-Успех — 200 `{"result": "ok"}`.
+Платежа нет — **404**.
+Запрещённый переход — **409** `{"error": "invalid_transition"}`, статус не меняется.
+Успех — **200** `{"result": "ok"}`.
 
 ```bash
 curl -X POST http://127.0.0.1:8000/webhooks/bank \
   -H "Content-Type: application/json" \
   -d '{"payment_id": 1, "status": "succeeded"}'
 ```
+
+#### Проверка подписи вебхука
+
+Если переменная окружения `WEBHOOK_SECRET` задана, эндпоинт `POST /webhooks/bank`
+проверяет заголовок `X-Signature` — HMAC-SHA256 от **сырого тела** запроса, hex-строка.
+
+- секрет не задан → проверка отключена (удобно для локальной разработки);
+- секрет задан, подпись валидна → обработка продолжается;
+- секрет задан, подпись неверна или отсутствует → **401**, статус платежа не меняется.
+
+Пример подписи на Python:
+
+```python
+import hashlib, hmac, json
+
+body = json.dumps({"payment_id": 1, "status": "succeeded"}).encode()
+sig = hmac.new(b"topsecret", body, hashlib.sha256).hexdigest()
+
+import httpx
+httpx.post(
+    "http://127.0.0.1:8000/webhooks/bank",
+    content=body,
+    headers={"X-Signature": sig, "Content-Type": "application/json"},
+)
+```
+
+Сравнение подписей делается через `hmac.compare_digest` (constant-time), чтобы избежать
+тайминг-атак.
 
 ## Бизнес-правила
 
@@ -180,6 +269,7 @@ app/
   models.py       # SQLAlchemy-модели: Tariff, Payment
   schemas.py      # Pydantic-схемы: TariffOut, PaymentCreate, PaymentOut, WebhookIn
   services.py     # бизнес-логика: промокод, график рассрочки
+  security.py     # HMAC-SHA256 проверка подписи вебхука
   seed.py         # создание тарифов при старте
   main.py         # сборка приложения, lifespan, подключение роутеров
   routers/
@@ -191,6 +281,9 @@ tests/
   test_tariffs.py
   test_payments.py
   test_webhooks.py
+Dockerfile
+docker-compose.yml
+pyproject.toml    # конфиг ruff
 ```
 
 ## Конфигурация
@@ -198,10 +291,23 @@ tests/
 Настройки читаются из переменных окружения или `.env` (шаблон — `.env.example`):
 
 - `DATABASE_URL` — строка подключения SQLAlchemy. По умолчанию `sqlite:///./kvitto.db`.
-- `WEBHOOK_SECRET` — секрет для проверки подписи вебхуков (пока не используется).
+  В Docker переопределяется на `postgresql+psycopg://kvitto:kvitto@db:5432/kvitto`.
+- `WEBHOOK_SECRET` — секрет для проверки HMAC-SHA256 подписи вебхуков.
+  Если пусто — проверка отключена.
+
+## Линтер и CI
+
+```bash
+ruff check .
+ruff check . --fix    # автофикс
+```
+
+GitHub Actions прогоняет `ruff check .` и `pytest -v` на каждый push в `main`.
 
 ## Заметки
 
 - Тесты используют отдельную in-memory SQLite с `StaticPool`, боевая база не затрагивается.
 - `Idempotency-Key` хранится в БД как уникальный ключ (`unique`, `nullable`).
 - Формат ошибок валидации — стандартный ответ FastAPI с кодом 422.
+- На SQLite `created_at` сериализуется без суффикса таймзоны, на PostgreSQL — с `Z`.
+  Формат в задании не оговорён, оба варианта допустимы.
