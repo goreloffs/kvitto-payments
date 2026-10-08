@@ -1,3 +1,8 @@
+import hashlib
+import hmac
+import json
+
+from app.config import settings
 
 
 def _create_payment(client) -> int:
@@ -71,15 +76,6 @@ def test_webhook_refunded_is_terminal(client):
             "/webhooks/bank", json={"payment_id": pid, "status": bad}
         )
         assert resp.status_code == 409, f"expected 409 for {bad}"
-
-
-# ---------- HMAC ----------
-
-import hashlib
-import hmac
-import json
-
-from app.config import settings
 
 
 def _sign(body: bytes, secret: str) -> str:
